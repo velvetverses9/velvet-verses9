@@ -511,21 +511,25 @@
         });
       }
 
-      function addMessageToUI(msg) {
+     function addMessageToUI(msg) {
         if (emptyState.parentNode) emptyState.remove();
 
         const div = document.createElement("div");
         const isMe = msg.side === mySide;
         div.className = `message ${isMe ? "me" : "them"}`;
 
-        const time = new Date(msg.timestamp).toLocaleTimeString([], {
+        // Full date + time (example: Oct 2, 2:31 PM)
+        const date = new Date(msg.timestamp);
+        const timeString = date.toLocaleString([], {
+          month: "short",
+          day: "numeric",
           hour: "2-digit",
           minute: "2-digit",
         });
 
         div.innerHTML = `
     ${escapeHtml(msg.text)}
-    <div class="meta">${time}</div>
+    <div class="meta">${timeString}</div>
   `;
 
         messagesDiv.appendChild(div);
@@ -536,7 +540,6 @@
           playNotificationSound();
         }
       }
-
       function sendMessage() {
         const text = messageInput.value.trim();
         if (!text) return;
