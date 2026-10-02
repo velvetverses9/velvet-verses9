@@ -329,6 +329,45 @@
           max-width: 85%;
         }
       }
+      .message .seen {
+        font-size: 0.65rem;
+        opacity: 0.6;
+        margin-top: 2px;
+        text-align: right;
+        color: #c4b5fd;
+      }
+      .message {
+        position: relative;
+        cursor: pointer;
+      }
+
+      .heart-btn {
+        position: absolute;
+        top: -12px;
+        right: 8px;
+        background: #1e1e24;
+        border: 1px solid #3f3f46;
+        border-radius: 50%;
+        width: 28px;
+        height: 28px;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+        cursor: pointer;
+        z-index: 10;
+      }
+
+      .message:hover .heart-btn,
+      .message.show-heart .heart-btn {
+        display: flex;
+      }
+
+      .hearts {
+        font-size: 0.75rem;
+        margin-top: 4px;
+        opacity: 0.9;
+      }
     </style>
   </head>
   <body>
@@ -369,6 +408,21 @@
           <h2>Just us</h2>
           <div class="status">Connected</div>
         </div>
+
+        <div
+          id="romantic-quote"
+          style="
+            flex: 1;
+            text-align: center;
+            font-size: 0.78rem;
+            color: #c4b5fd;
+            padding: 0 12px;
+            line-height: 1.3;
+          "
+        >
+          Waiting for your words…
+        </div>
+
         <div class="header-actions">
           <button class="header-btn" id="logout-btn">Logout</button>
         </div>
@@ -377,7 +431,7 @@
       <div id="messages">
         <div id="empty-state">
           <div class="icon">💬</div>
-          <p>No messages yet.<br />Say something nice.</p>
+          <p id="empty-text">Waiting for your words…</p>
         </div>
       </div>
 
@@ -433,6 +487,8 @@
       const logoutBtn = document.getElementById("logout-btn");
 
       let mySide = localStorage.getItem("chat_side") || null;
+      let typingTimeout = null;
+      let otherSide = null;
 
       // LOGIN
       loginBtn.addEventListener("click", () => {
@@ -462,6 +518,52 @@
         if (e.key === "Enter") loginBtn.click();
       });
 
+      function setRomanticEmptyText() {
+        const lines = [
+          "Waiting for your words…",
+          "The distance is temporary, we are not.",
+          "Say something that will make me smile.",
+          "I’m here whenever you’re ready.",
+          "Your message is the best part of my day.",
+          "Miss you already…",
+        ];
+        const random = lines[Math.floor(Math.random() * lines.length)];
+        const el = document.getElementById("empty-text");
+        if (el) el.textContent = random;
+      }
+
+      function startRomanticQuotes() {
+        const quotes = [
+          "I love you baby ko...ikaw lang walang iba!",
+          "Waiting for your words…",
+          "The distance is temporary, we are not.",
+          "Say something that will make me smile.",
+          "I’m here whenever you’re ready.",
+          "Your message is the best part of my day.",
+          "Miss you already…",
+          "Thinking of you right now.",
+          "You make the distance feel smaller.",
+        ];
+
+        const quoteEl = document.getElementById("romantic-quote");
+        if (!quoteEl) return;
+
+        let index = 0;
+
+        // Change every 8 minutes (480000 ms)
+        setInterval(
+          () => {
+            index = (index + 1) % quotes.length;
+            quoteEl.style.opacity = "0";
+            setTimeout(() => {
+              quoteEl.textContent = quotes[index];
+              quoteEl.style.opacity = "1";
+            }, 400);
+          },
+          8 * 60 * 1000,
+        ); // 8 minutes
+      }
+
       function showError(text) {
         errorMsg.textContent = text;
         errorMsg.style.display = "block";
@@ -482,7 +584,16 @@
             localStorage.setItem("chat_side", mySide);
           }
 
+          otherSide = mySide === "dubai" ? "manila" : "dubai";
+
+          // Update my lastSeen
+          db.ref("status/" + mySide + "/lastSeen").set(Date.now());
+
           startListeningToMessages();
+          listenToTyping();
+          listenToLastSeen();
+          setRomanticEmptyText();
+          startRomanticQuotes();
           messageInput.focus();
         } else {
           chatScreen.style.display = "none";
@@ -507,18 +618,27 @@
 
         messagesRef.orderByChild("timestamp").on("child_added", (snapshot) => {
           const msg = snapshot.val();
+          msg.id = snapshot.key; // save the Firebase key
           addMessageToUI(msg);
+        });
+
+        // Also listen for heart updates
+        messagesRef.on("child_changed", (snapshot) => {
+          const msg = snapshot.val();
+          msg.id = snapshot.key;
+          // Simple way: re-render the whole list (good enough for now)
+          // For better performance we could update only one message later
         });
       }
 
-     function addMessageToUI(msg) {
+      function addMessageToUI(msg) {
         if (emptyState.parentNode) emptyState.remove();
 
         const div = document.createElement("div");
         const isMe = msg.side === mySide;
         div.className = `message ${isMe ? "me" : "them"}`;
+        div.dataset.id = msg.id || ""; // we will store the message id
 
-        // Full date + time (example: Oct 2, 2:31 PM)
         const date = new Date(msg.timestamp);
         const timeString = date.toLocaleString([], {
           month: "short",
@@ -527,19 +647,105 @@
           minute: "2-digit",
         });
 
+        let seenText = "";
+        if (isMe && otherLastSeen > msg.timestamp) {
+          seenText = `<div class="seen">Seen</div>`;
+        }
+
+        // Show existing hearts if any
+        const heartCount = msg.hearts ? Object.keys(msg.hearts).length : 0;
+        const heartsHtml =
+          heartCount > 0 ? `<div class="hearts">❤️ ${heartCount}</div>` : "";
+
         div.innerHTML = `
     ${escapeHtml(msg.text)}
     <div class="meta">${timeString}</div>
+    ${seenText}
+    ${heartsHtml}
+    <div class="heart-btn" title="Add heart">❤️</div>
   `;
+
+        // Heart button click
+        const heartBtn = div.querySelector(".heart-btn");
+        heartBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          addHeartToMessage(msg.id);
+        });
+
+        // Long press / right click to show heart button
+        div.addEventListener("contextmenu", (e) => {
+          e.preventDefault();
+          div.classList.add("show-heart");
+        });
+
+        // On mobile: long press
+        let pressTimer;
+        div.addEventListener("touchstart", () => {
+          pressTimer = setTimeout(() => {
+            div.classList.add("show-heart");
+          }, 600);
+        });
+        div.addEventListener("touchend", () => clearTimeout(pressTimer));
+        div.addEventListener("touchmove", () => clearTimeout(pressTimer));
 
         messagesDiv.appendChild(div);
         scrollToBottom();
 
-        // Play sound only for messages from the other person
         if (!isMe) {
           playNotificationSound();
         }
       }
+
+      function addHeartToMessage(messageId) {
+        if (!messageId) return;
+
+        const heartRef = db.ref(`messages/${messageId}/hearts/${mySide}`);
+        heartRef.set(true); // just mark that this side gave a heart
+      }
+
+      // ========== TYPING INDICATOR ==========
+      function listenToTyping() {
+        db.ref("status/" + otherSide + "/typing").on("value", (snap) => {
+          const isTyping = snap.val();
+          const statusEl = document.querySelector(".status");
+          if (isTyping) {
+            statusEl.textContent = "typing…";
+            statusEl.style.color = "#f472b6"; // soft pink
+          } else {
+            statusEl.textContent = "Connected";
+            statusEl.style.color = "#4ade80";
+          }
+        });
+      }
+
+      // When I type
+      messageInput.addEventListener("input", () => {
+        db.ref("status/" + mySide + "/typing").set(true);
+
+        clearTimeout(typingTimeout);
+        typingTimeout = setTimeout(() => {
+          db.ref("status/" + mySide + "/typing").set(false);
+        }, 1500);
+      });
+
+      // ========== SEEN STATUS ==========
+      let otherLastSeen = 0;
+
+      function listenToLastSeen() {
+        db.ref("status/" + otherSide + "/lastSeen").on("value", (snap) => {
+          otherLastSeen = snap.val() || 0;
+          // Re-render messages so "Seen" appears
+          // (we will update the message display)
+        });
+      }
+
+      // Update my lastSeen every 30 seconds while chat is open
+      setInterval(() => {
+        if (auth.currentUser) {
+          db.ref("status/" + mySide + "/lastSeen").set(Date.now());
+        }
+      }, 30000);
+
       function sendMessage() {
         const text = messageInput.value.trim();
         if (!text) return;
